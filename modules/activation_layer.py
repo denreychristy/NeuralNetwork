@@ -5,7 +5,7 @@
 
 from typing import Callable
 
-from layer import Layer
+from modules.layer import Layer
 
 # ================================================================================================ #
 

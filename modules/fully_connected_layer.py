@@ -5,7 +5,7 @@
 
 import numpy as np
 
-from layer import Layer
+from modules.layer import Layer
 
 # ================================================================================================ #
 
