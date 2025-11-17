@@ -3,7 +3,9 @@
 # ================================================================================================ #
 # Imports
 
-from random	import choice, randint
+import pickle
+
+from random	import randint
 from time	import time
 from typing	import Callable, Optional
 
@@ -97,15 +99,26 @@ class NeuralNetwork:
 
 		self.__current_error_rate: Optional[float] = None
 
+		# TODO: Make this a dunder variable
 		self.total_training_time: float = 0.0
 		self.__error_rate_by_5_minutes: Optional[float] = None
+
+		# TODO: Error rate by epochs
+		self.__total_training_epochs: int = 0
+		self.__error_rate_by_10_000_epochs: Optional[float] = None
 	
 	# ================================================== #
 	# Class Methods
-
+	
 	@classmethod
-	def generate_new_structure(cls, structure: list[int]) -> list[int]:
-		return [1]
+	def load(cls, filename: str) -> 'NeuralNetwork':
+		if '.pkl' not in filename:
+			filename = filename + '.pkl'
+		
+		with open(filename, 'rb') as file:
+			unpickled_instance = pickle.load(file)
+		
+		return unpickled_instance
 	
 	@classmethod
 	def new(cls, structure) -> 'NeuralNetwork':
@@ -148,6 +161,11 @@ class NeuralNetwork:
 			new_structure = alteration_function(new_structure)
 
 		return self.new(new_structure)
+	
+	def save(self, filename: str) -> None:
+		filename = filename + '.pkl'
+		with open(filename, 'wb') as file:
+			pickle.dump(self, file)
 
 	def predict(self, input_data):
 		samples = len(input_data)

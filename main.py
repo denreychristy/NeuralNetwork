@@ -28,7 +28,14 @@ if __name__ == '__main__':
 
 	training_time = 10.0
 
-	network.train(input_data, output_data, 1_000_000, .001, training_time, None, False)
+	network.train(input_data, output_data, 1_000_000, .001, training_time, None, True)
+
+	filename = 'pickles/network'
+	print(f'Saving trained network with filename: {filename}')
+	network.save(filename)
+
+	loaded_network = NeuralNetwork.load(filename)
+	print(f'Loaded network structure: {loaded_network.structure}')
 
 	error = network.current_error_rate
 	if error is not None:
@@ -42,11 +49,15 @@ if __name__ == '__main__':
 	print()
 	print(f'Error Rate By 5 Minutes: {network.error_rate_by_5_minutes}')
 
-	print()
+	# Related Network
 	related_network = network.create_related_network()
-	related_network.train(input_data, output_data, 1_000_000, .001, training_time, None, False)
+	related_network.train(input_data, output_data, 1_000_000, .001, training_time, None, True)
+	related_network.save('pickles/related_network')
+
+	print()
 	print(f'Related network structure: {related_network.structure}')
-	print(related_network.current_error_rate)
+	if related_network.current_error_rate is not None:
+		print(f'Related network error rate: {round(related_network.current_error_rate, 4)}')
 
 	if related_network.current_error_rate is not None:
 		if network.current_error_rate is not None:
