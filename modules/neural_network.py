@@ -90,6 +90,7 @@ class NeuralNetwork:
 		loss_tuple: tuple[Callable, Callable] = loss_functions['mse']):
 		
 		self.__structure = structure
+		# TODO: Make dunder method
 		self.layers: list[Layer] = []
 		for i in range(len(structure) - 1):
 			self.add_layer(FullyConnectedLayer(structure[i], structure[i + 1]))
