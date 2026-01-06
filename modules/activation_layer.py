@@ -3,6 +3,9 @@
 # ================================================================================================ #
 # Imports
 
+import numpy as np
+import numpy.typing as npt
+
 from typing import Callable
 
 from modules.layer import Layer
@@ -10,9 +13,16 @@ from modules.layer import Layer
 # ================================================================================================ #
 
 class ActivationLayer(Layer):
-	def __init__(self, activation_tuple: tuple[Callable, Callable]):
-		self.activation: Callable = activation_tuple[0]
-		self.activation_prime: Callable = activation_tuple[1]
+	def __init__(
+		self,
+		activation_tuple: tuple[
+			Callable[[npt.ArrayLike], npt.NDArray[np.float64]],
+			Callable[[npt.ArrayLike], npt.NDArray[np.float64]]
+		]
+	):
+		
+		self.activation: Callable[[npt.ArrayLike], npt.NDArray[np.float64]] = activation_tuple[0]
+		self.activation_prime: Callable[[npt.ArrayLike], npt.NDArray[np.float64]] = activation_tuple[1]
 	
 	# ================================================== #
 	# Class Methods
@@ -29,12 +39,12 @@ class ActivationLayer(Layer):
 	# ================================================== #
 	# Other Methods
 
-	def forward_propagation(self, input_data):
-		self.input = input_data
-		self.output = self.activation(self.input)
+	def forward_propagation(self, input_data: np.ndarray) -> np.ndarray:
+		self.input: np.ndarray = input_data
+		self.output: np.ndarray = self.activation(self.input)
 		return self.output
 
-	def backward_propagation(self, output_error, learning_rate):
+	def backward_propagation(self, output_error: np.ndarray, learning_rate: float) -> np.ndarray:
 		return self.activation_prime(self.input) * output_error
 
 # ================================================================================================ #

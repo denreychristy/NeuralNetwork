@@ -51,7 +51,7 @@ if __name__ == '__main__':
 
 	# Related Network
 	related_network = network.create_related_network()
-	related_network.train(input_data, output_data, 1_000_000, .001, training_time, None, True)
+	related_network.train(input_data, output_data, 1_000_000, .001, training_time, None, True, 1, True)
 	related_network.save('pickles/related_network')
 
 	print()
@@ -65,3 +65,9 @@ if __name__ == '__main__':
 				print('The new related network is better.')
 			else:
 				print('The first network was better.')
+	
+	# Snapshot
+	print()
+	with open('snapshots.txt', 'w') as file:
+		for snapshot in related_network.snapshot_list:
+			file.write(str(snapshot))

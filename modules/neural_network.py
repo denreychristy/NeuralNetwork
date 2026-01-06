@@ -3,6 +3,8 @@
 # ================================================================================================ #
 # Imports
 
+import numpy as np
+import numpy.typing as npt
 import pickle
 
 from random	import randint
@@ -69,13 +71,13 @@ def remove_layer(structure: list[int]) -> list[int]:
 
 # ================================================================================================ #
 
-def print_progress_function(i, epochs, err, start_time) -> None:
+def print_progress_function(i: int, epochs: int, err: float, start_time: float) -> None:
 	elapsed_time = time() - start_time
 	hours = round(elapsed_time // (60.0 * 60.0))
 	minutes = round((elapsed_time % (60.0 * 60.0)) // 60.0)
 	seconds = round(elapsed_time % 60.0)
 
-	result = []
+	result: list[str] = []
 	result.append(f'epoch {i + 1} / {epochs}')
 	result.append('\t')
 	result.append(f'error = {round(err, 4)}')
@@ -85,9 +87,21 @@ def print_progress_function(i, epochs, err, start_time) -> None:
 
 # ================================================================================================ #
 
+class Snapshot:
+	def __init__(self):
+		self.__data = []
+
+# ================================================================================================ #
+
 class NeuralNetwork:
-	def __init__(self, structure: list[int],
-		loss_tuple: tuple[Callable, Callable] = loss_functions['mse']):
+	def __init__(
+		self,
+		structure: list[int],
+		loss_tuple: tuple[
+			Callable[[npt.ArrayLike, npt.ArrayLike], np.float64],
+			Callable[[npt.ArrayLike, npt.ArrayLike], npt.NDArray[np.float64]]
+		] = loss_functions['mse']
+	):
 		
 		self.__structure = structure
 		# TODO: Make dunder method
@@ -96,17 +110,17 @@ class NeuralNetwork:
 			self.add_layer(FullyConnectedLayer(structure[i], structure[i + 1]))
 			self.add_layer(ActivationLayer(activation_functions['tanh']))
 
-		self.set_loss_function(loss_tuple)
+		self.__set_loss_function(loss_tuple)
 
 		self.__current_error_rate: Optional[float] = None
-
-		# TODO: Make this a dunder variable
-		self.total_training_time: float = 0.0
+		self.__total_training_time: float = 0.0
 		self.__error_rate_by_5_minutes: Optional[float] = None
 
 		# TODO: Error rate by epochs
 		self.__total_training_epochs: int = 0
 		self.__error_rate_by_10_000_epochs: Optional[float] = None
+
+		self.__snapshot_list = []
 	
 	# ================================================== #
 	# Class Methods
@@ -122,7 +136,7 @@ class NeuralNetwork:
 		return unpickled_instance
 	
 	@classmethod
-	def new(cls, structure) -> 'NeuralNetwork':
+	def new(cls, structure: list[int]) -> 'NeuralNetwork':
 		return cls(structure)
 
 	# ================================================== #
@@ -140,8 +154,32 @@ class NeuralNetwork:
 		return self.__error_rate_by_5_minutes
 
 	@property
+	def snapshot(self):
+		matrix = []
+		
+		for layer in self.layers:
+			if isinstance(layer, FullyConnectedLayer):
+				layer_list = []
+				for i in range(len(layer.bias[0])):
+					bias = float(layer.bias[0][i])
+					weights = [float(x) for x in layer.weights[0]]
+					layer_list.append(bias)
+					layer_list.append(weights)
+				matrix.append(layer_list)
+
+		return matrix
+	
+	@property
+	def snapshot_list(self):
+		return self.__snapshot_list
+	
+	@property
 	def structure(self):
 		return self.__structure
+	
+	@property
+	def total_training_time(self):
+		return self.__total_training_time
 
 	# ================================================== #
 	# Set Methods
@@ -149,7 +187,7 @@ class NeuralNetwork:
 	# ================================================== #
 	# Other Methods
 
-	def add_layer(self, layer):
+	def add_layer(self, layer: Layer):
 		self.layers.append(layer)
 	
 	def create_related_network(self) -> 'NeuralNetwork':
@@ -167,7 +205,7 @@ class NeuralNetwork:
 		filename = filename + '.pkl'
 		with open(filename, 'wb') as file:
 			pickle.dump(self, file)
-
+	
 	def predict(self, input_data):
 		samples = len(input_data)
 		result = []
@@ -180,17 +218,28 @@ class NeuralNetwork:
 
 		return result
 
-	def set_loss_function(self, loss_tuple: tuple[Callable, Callable]):
+	def __set_loss_function(
+		self,
+		loss_tuple: tuple[
+			Callable[[npt.ArrayLike, npt.ArrayLike], np.float64],
+			Callable[[npt.ArrayLike, npt.ArrayLike], npt.NDArray[np.float64]]
+		]
+	):
+	
 		self.loss = loss_tuple[0]
 		self.loss_prime = loss_tuple[1]
 
-	def train(self, x_train, y_train, epochs: int = 10_000, learning_rate: float = .01,
+	def train(self, x_train: np.ndarray, y_train: np.ndarray, epochs: int = 10_000, learning_rate: float = .01,
 		max_time_in_seconds: Optional[float] = None, error_threshold: Optional[float] = None,
-		print_progress: bool = False, print_progress_time_interval: float = 1.0):
+		print_progress: bool = False, print_progress_time_interval: float = 1.0,
+		take_snapshots: bool = False):
 		
 		start_time = time()
 		last_print_time = None
 		samples = len(x_train)
+		self.__snapshots = []
+		
+		if take_snapshots: self.__snapshot_list.append(self.snapshot)
 
 		err = 0
 
@@ -218,7 +267,7 @@ class NeuralNetwork:
 			# calculate average error on all samples
 			err /= samples
 			if self.__error_rate_by_5_minutes is None:
-				if (self.total_training_time + time() - start_time) >= (5 * 60.0):
+				if (self.__total_training_time + time() - start_time) >= (5 * 60.0):
 					self.__error_rate_by_5_minutes = err
 
 			# Print Progress
@@ -234,10 +283,12 @@ class NeuralNetwork:
 			# Break if error threshold is reached
 			if error_threshold is not None:
 				if err <= error_threshold:
+					if take_snapshots: self.__snapshot_list.append(self.snapshot)
 					break
 			
 			self.__current_error_rate = err
+			if take_snapshots: self.__snapshot_list.append(self.snapshot)
 	
-		self.total_training_time += time() - start_time
+		self.__total_training_time += time() - start_time
 
 # ================================================================================================ #
