@@ -11,7 +11,7 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
+fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     Ok(())
 }
@@ -89,4 +89,54 @@ impl Matrix {
 
 		result
 	}
+
+	// ================================================== //
+
+	pub fn map<F>(&self, func: F) -> Matrix where F: Fn(f32) -> f32 {
+		let data = self.data.iter().map(|&x| func(x)).collect();
+
+		Matrix {
+			rows: self.rows,
+			cols: self.cols,
+			data
+		}
+	}
+
+	// ================================================== //
+
+	pub fn zip_map<F>(&self, other: &matrix, func: F) -> Matrix where F: Fn(f32, f32) -> f32 {
+		assert_eq!(
+			(self.rows, self.cols),
+			(other.rows, other.cols),
+			"Dimension mismatch in Matrix::zip_map()"
+		);
+
+		let data = self.data.iter().zip(other.data.iter()).map(|&a, &b| func(a, b)).collect();
+
+		Matrix {
+			rows: self.rows,
+			cols: self.cols,
+			data
+		}
+	}
+
+	// ================================================== //
 }
+
+// ============================================================================================== //
+// Layer Trait
+
+pub trait Layer {
+	fn forward(&mut self, input: &Matrix) -> Matrix;
+	fn backward(&mut self, output_gradient: &Matrix, learning_rate: f32) -> Matrix;
+}
+
+// ============================================================================================== //
+// Dense Struct
+
+pub struct Dense {
+	pub weights: Matrix,
+	pub biases: Matrix,
+	pub last_input: Option<Matrix>
+}
+
