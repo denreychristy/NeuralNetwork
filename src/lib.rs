@@ -1,122 +1,142 @@
+// Rust Module
+
+// ============================================================================================== //
+// Imports
 
 use std::assert_eq;
 
+use rand::RngExt;
+
 use pyo3::prelude::*;
 
-/// Formats the sum of two numbers as string.
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
-}
+// ============================================================================================== //
+// PyModule Function
 
-/// A Python module implemented in Rust.
 #[pymodule]
 fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     Ok(())
 }
 
 // ============================================================================================== //
-// Matrix Struct
+// Helper Functions
 
-#[derive(Clone, Debug)]
-pub struct Matrix {
-	pub rows: usize,
-	pub cols: usize,
-	pub data: Vec<f32>
+fn random_vector(size: usize, lb: f32, ub: f32) -> Vec<f32> {
+	let mut rng = rand::rng();
+	(0..size).map(|_| rng.random_range(lb..=ub)).collect()
 }
 
-impl Matrix {
+// ============================================================================================== //
+// Propogation Trait
+
+trait Propogation {
 	// ================================================== //
 
-	pub fn new(rows: usize, cols: usize, data: Vec<f32>) -> Self {
-		assert_eq!(rows * cols, data.len(), "Dimension mismatch in Matrix::new().");
-		Self {rows, cols, data}
-	}
+	fn forward(&mut self, input: Vec<f32>) {}
 
 	// ================================================== //
-	
-	pub fn zeros(rows: usize, cols: usize) -> Self {
+
+	fn backward(&mut self, output_error: Vec<f32>, learning_rate: f32) {}
+
+	// ================================================== //
+}
+
+// ============================================================================================== //
+// Fully Connected Layer Struct
+
+struct FullyConnectedLayer {
+	input_size: usize,
+	output_size: usize,
+	inputs: Vec<f32>,
+	outputs: Vec<f32>,
+	weights: Vec<f32>, // One for every node in this layer * every node in the next layer
+	bias: Vec<f32>, // One for every node in the next layer
+	input_error: Vec<f32> // One for every node in this layer
+}
+
+impl FullyConnectedLayer {
+	// ================================================== //
+
+	fn new(input_size: usize, output_size: usize) -> Self {
 		Self {
-			rows,
-			cols,
-			data: vec![0.0; rows * cols]
+			input_size,
+			output_size,
+			inputs: Vec::with_capacity(input_size),
+			outputs: Vec::with_capacity(output_size),
+			weights: random_vector(input_size * output_size, -1.0, 1.0),
+			bias: random_vector(input_size * output_size, -1.0, 1.0),
+			input_error: Vec::with_capacity(input_size)
 		}
 	}
 
 	// ================================================== //
 
-	pub fn random(rows: usize, cols: usize, seed: &mut u64) -> Self {
-		let mut data = Vec::with_capacity(rows * cols);
-		let scale = (2.0 / rows as f32).sqrt();
+	fn get_weight(&self, from_node: usize, to_node: usize) -> f32 {
+		// *from* is rows, *to* is cols
+		let index: usize = from_node * self.input_size + to_node;
 
-		for _ in 0..(rows * cols) {
-			*seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-			let rnd = ((*seed >> 33) as f32) / (u32::MAX as f32);
-			data.push((rnd * 2.0 - 1.0) * scale);
-		}
-
-		Self {rows, cols, data}
+		self.weights[index]
 	}
 
 	// ================================================== //
 
-	pub fn dot(&self, other: &Matrix) -> Matrix {
-		assert_eq!(self.cols, other.rows, "Dimension mismatch in Matrix::dot().");
-		let mut result = Matrix::zeros(self.rows, other.cols);
+	fn get_bias(&self, from_node: usize) -> f32 {
+		// This vector is 1-dimensional
+		self.bias[from_node]
+	}
+
+	// ================================================== //
+}
+
+impl Propogation for FullyConnectedLayer {
+	// ================================================== //
+
+	fn forward(&mut self, input: Vec<f32>) {
+		assert_eq!(self.input_size, input.len(), "Wrong dimension for forward()!");
 		
-		for i in 0..self.cols {
-			for k in 0..self.cols {
-				let r = self.data[i * self.cols + k];
-				for j in 0..other.cols {
-					result.data[i * other.cols + j] += r * other.data[k * other.cols + j];
-				}
+		for i in 0..self.input_size {
+			self.inputs[i] = input[i];
+		}
+
+		// for every node in the next layer,
+		for o in 0..self.output_size {
+			self.outputs[o] = 0.0; // (zero out the node)
+			// take each node in this layer
+			for i in 0..self.input_size {
+				// and add up this node's value times the corresponding weight
+				self.outputs[o] += self.inputs[i] * self.get_weight(i, o);
+				// plus the bias
+				self.outputs[o] += self.get_bias(i);
+			}
+		}
+	}
+
+	// ================================================== //
+
+	fn backward(&mut self, output_error: Vec<f32>, learning_rate: f32) {
+		// Output Error | this vector is length self.output_size
+
+		// Inputs Error | this vector is length self.input_size
+		for i in 0..self.input_size {
+			self.input_error[i] = 0.0;
+			for o in 0..self.output_size {
+				self.input_error[i] += output_error[o] * self.get_weight(i, o);
+			}
+		}
+		
+		// Weights Error
+		let mut weights_error: f32 = 0.0;
+		for i in 0..self.input_size {
+			for o in 0..self.output_size {
+				weights_error += self.inputs[i] * output_error[o];
 			}
 		}
 
-		result
-	}
-
-	// ================================================== //
-
-	fn transpose(&self) -> Self {
-		let mut result = Matrix::zeros(self.cols, self.rows);
-		for r in 0..self.rows {
-			for c in 0..self.cols {
-				result.data[c * self.rows + r] = self.data[r * self.cols + c];
-			}
+		// Update parameters
+		for w in 0..self.weights.len() {
+			self.weights[w] -= learning_rate * weights_error;
 		}
-
-		result
-	}
-
-	// ================================================== //
-
-	pub fn map<F>(&self, func: F) -> Matrix where F: Fn(f32) -> f32 {
-		let data = self.data.iter().map(|&x| func(x)).collect();
-
-		Matrix {
-			rows: self.rows,
-			cols: self.cols,
-			data
-		}
-	}
-
-	// ================================================== //
-
-	pub fn zip_map<F>(&self, other: &matrix, func: F) -> Matrix where F: Fn(f32, f32) -> f32 {
-		assert_eq!(
-			(self.rows, self.cols),
-			(other.rows, other.cols),
-			"Dimension mismatch in Matrix::zip_map()"
-		);
-
-		let data = self.data.iter().zip(other.data.iter()).map(|&a, &b| func(a, b)).collect();
-
-		Matrix {
-			rows: self.rows,
-			cols: self.cols,
-			data
+		for o in 0..self.output_size {
+			self.bias[o] -= learning_rate * output_error[o];
 		}
 	}
 
@@ -124,19 +144,115 @@ impl Matrix {
 }
 
 // ============================================================================================== //
-// Layer Trait
+// Activation Layer Struct
 
-pub trait Layer {
-	fn forward(&mut self, input: &Matrix) -> Matrix;
-	fn backward(&mut self, output_gradient: &Matrix, learning_rate: f32) -> Matrix;
+struct ActivationLayer {
+	input_size: usize,
+	output_size: usize,
+	inputs: Vec<f32>,
+	outputs: Vec<f32>,
+	activation: fn(&Vec<f32>) -> Vec<f32>,
+	activation_prime: fn(&Vec<f32>) -> Vec<f32>,
+	input_error: Vec<f32>
+}
+
+impl ActivationLayer {
+	// ================================================== //
+
+	fn new(input_size: usize, output_size: usize, activation: fn(&Vec<f32>) -> Vec<f32>,
+		activation_prime: fn(&Vec<f32>) -> Vec<f32>) -> Self {
+
+		Self {
+			input_size,
+			output_size,
+			inputs: Vec::with_capacity(input_size),
+			outputs: Vec::with_capacity(output_size),
+			activation,
+			activation_prime,
+			input_error: Vec::with_capacity(input_size)
+		}
+	}
+}
+
+impl Propogation for ActivationLayer {
+	// ================================================== //
+
+	fn forward(&mut self, input: Vec<f32>) {
+		assert_eq!(self.input_size, input.len(), "Wrong dimension for forward()!");
+		let activated_inpts = (self.activation)(&self.inputs);
+		for i in 0..self.input_size {
+			self.inputs[i] = input[i];
+			self.outputs[i] = activated_inpts[i];
+		}
+	}
+
+	// ================================================== //
+
+	fn backward(&mut self, output_error: Vec<f32>, learning_rate: f32) {
+		let activated_prime_outputs = (self.activation_prime)(&self.outputs);
+		for i in 0..self.input_size {
+			self.input_error[i] = activated_prime_outputs[i] * output_error[i];
+		}
+	}
+
+	// ================================================== //
 }
 
 // ============================================================================================== //
-// Dense Struct
+// Activation Functions
 
-pub struct Dense {
-	pub weights: Matrix,
-	pub biases: Matrix,
-	pub last_input: Option<Matrix>
+fn vector_tanh(vector: &Vec<f32>) -> Vec<f32> {
+	(0..vector.len())
+		.map(|v| vector[v].tanh())
+		.collect()
 }
 
+fn vector_tanh_prime(vector: &Vec<f32>) -> Vec<f32> {
+	(0..vector.len())
+		.map(|v| 1.0 - vector[v].tanh().powf(2.0))
+		.collect()
+}
+
+// ============================================================================================== //
+// Layer Enum
+
+enum Layer {
+	FullyConnectedLayer(FullyConnectedLayer),
+	ActivationLayer(ActivationLayer)
+}
+
+// ============================================================================================== //
+// Network Struct
+
+struct Network {
+	structure: Vec<usize>,
+	layers: Vec<Layer>
+}
+
+impl Network {
+	// ================================================== //
+
+	fn new(structure: Vec<usize>) -> Self {
+		let mut layers: Vec<Layer> = Vec::new();
+		for l in 0..(structure.len() - 1) {
+			layers.push(Layer::FullyConnectedLayer(FullyConnectedLayer::new(structure[l], structure[l + 1])));
+			layers.push(
+				Layer::ActivationLayer(ActivationLayer::new(
+					structure[l + 1],
+					structure[l + 1],
+					vector_tanh,
+					vector_tanh_prime
+				))
+			);
+		}
+
+		Self {
+			structure,
+			layers
+		}
+	}
+
+	// ================================================== //
+}
+
+// ============================================================================================== //
