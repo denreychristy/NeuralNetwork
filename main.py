@@ -3,6 +3,7 @@
 # ================================================================================================ #
 # Imports
 
+from math import log10
 from random import randint
 from time import time
 
@@ -71,7 +72,10 @@ def create_optimum_network(inputs: list[list[float]], outputs: list[list[float]]
 				times_tested += 1
 		average_epochs = total_epochs / times_tested
 		average_elapsed = total_elapsed / times_tested
-		structures_dict[structure] = (sum(structure), average_epochs, average_elapsed)
-	print(structures_dict)
+		statistics = (log10(sum(structure)), log10(average_epochs), average_elapsed)
+		structures_dict[structure] = sum(statistics)
+	results = list(structures_dict.items())
+	results.sort(key = lambda structure: structure[1])
+	print(results[0])
 
 create_optimum_network(inputs, outputs)
