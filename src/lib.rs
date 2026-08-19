@@ -7,6 +7,7 @@ use std::assert_eq;
 
 use rand::RngExt;
 
+use ndarray::{Array1, s};
 use pyo3::prelude::*;
 
 // ============================================================================================== //
@@ -23,6 +24,60 @@ fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
 fn random_vector(size: usize, lb: f32, ub: f32) -> Vec<f32> {
 	let mut rng = rand::rng();
 	(0..size).map(|_| rng.random_range(lb..=ub)).collect()
+}
+
+fn vector_dot(vec_a: &[f32], vec_b: &[f32]) -> f32 {
+	let arr_a = Array1::from_vec(vec_a.to_vec());
+	let arr_b = Array1::from_vec(vec_b.to_vec());
+
+	arr_a.dot(&arr_b)
+}
+
+// ============================================================================================== //
+// Matrix
+
+struct Matrix {
+	rows: usize,
+	cols: usize,
+	array: Array1<f32>
+}
+
+impl Matrix {
+	fn new(rows: usize, cols: usize, array: Array1<f32>) -> Self {
+		Self {rows, cols, array}
+	}
+
+	fn from_data(data: Vec<Vec<f32>>) -> Self {
+		let rows: usize = data.len();
+		let cols: usize = data[0].len();
+		let mut vector: Vec<f32> = Vec::with_capacity(rows * cols);
+		for r in 0..rows {
+			for c in 0..cols {
+				vector.push(data[r][c]);
+			}
+		}
+		let array: Array1<f32> = Array1::from_vec(vector);
+
+		Self {rows, cols, array}
+	}
+
+	fn get(&self, row: usize, col: usize) -> f32 {
+		self.array[row * self.cols + col]
+	}
+
+	fn get_row(&self, row: usize) -> Self {
+		let rows: usize = 1;
+		let cols: usize = self.cols;
+		let start: usize = row * self.cols;
+		let stop: usize = (row + 1) * self.cols;
+		let array: Array1<f32> = self.array.slice(s![start..stop]).to_owned();
+
+		Self {rows, cols, array}
+	}
+
+	fn dot(&self, other: &Matrix) {
+		// TODO!
+	}
 }
 
 // ============================================================================================== //
