@@ -3,11 +3,8 @@
 // ============================================================================================== //
 // Imports
 
-use std::assert_eq;
-
 use rand::RngExt;
-
-use ndarray::{Array1, s};
+use ndarray::Array2;
 use pyo3::prelude::*;
 
 // ============================================================================================== //
@@ -15,257 +12,179 @@ use pyo3::prelude::*;
 
 #[pymodule]
 fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    Ok(())
+	m.add_class::<Network>()?;
+	Ok(())
 }
 
 // ============================================================================================== //
-// Helper Functions
+// Matrix Struct
 
-fn random_vector(size: usize, lb: f32, ub: f32) -> Vec<f32> {
-	let mut rng = rand::rng();
-	(0..size).map(|_| rng.random_range(lb..=ub)).collect()
-}
-
-fn vector_dot(vec_a: &[f32], vec_b: &[f32]) -> f32 {
-	let arr_a = Array1::from_vec(vec_a.to_vec());
-	let arr_b = Array1::from_vec(vec_b.to_vec());
-
-	arr_a.dot(&arr_b)
-}
-
-// ============================================================================================== //
-// Matrix
-
+#[derive(Clone)]
 struct Matrix {
-	rows: usize,
-	cols: usize,
-	array: Array1<f32>
+	array: Array2<f32>,
 }
 
 impl Matrix {
-	fn new(rows: usize, cols: usize, array: Array1<f32>) -> Self {
-		Self {rows, cols, array}
+	fn add(&self, other: &Matrix) -> Self {
+		Self { array: &self.array + &other.array }
+	}
+
+	fn dot(&self, other: &Matrix) -> Self {
+		Self { array: self.array.dot(&other.array) }
 	}
 
 	fn from_data(data: Vec<Vec<f32>>) -> Self {
-		let rows: usize = data.len();
-		let cols: usize = data[0].len();
-		let mut vector: Vec<f32> = Vec::with_capacity(rows * cols);
-		for r in 0..rows {
-			for c in 0..cols {
-				vector.push(data[r][c]);
-			}
-		}
-		let array: Array1<f32> = Array1::from_vec(vector);
+		let rows = data.len();
+		let cols = data[0].len();
+		let flat_data: Vec<f32> = data.into_iter().flatten().collect();
+		let array = Array2::from_shape_vec(
+			(rows, cols),
+			flat_data
+		)
+			.expect("Dimension mismatch!");
 
-		Self {rows, cols, array}
+		Self { array }
 	}
 
-	fn get(&self, row: usize, col: usize) -> f32 {
-		self.array[row * self.cols + col]
+	fn transpose(&self) -> Self {
+		Self { array: self.array.t().to_owned() }
 	}
 
-	fn get_row(&self, row: usize) -> Self {
-		let rows: usize = 1;
-		let cols: usize = self.cols;
-		let start: usize = row * self.cols;
-		let stop: usize = (row + 1) * self.cols;
-		let array: Array1<f32> = self.array.slice(s![start..stop]).to_owned();
-
-		Self {rows, cols, array}
+	fn random(rows: usize, cols: usize, lb: f32, ub: f32) -> Self {
+		let mut rng = rand::rng();
+		Self { array: Array2::from_shape_fn((rows, cols), |_| rng.random_range(lb..=ub)) }
 	}
 
-	fn dot(&self, other: &Matrix) {
-		// TODO!
+	fn scale(&self, factor: f32) -> Self {
+		Self { array: &self.array * factor }
+	}
+
+	fn zeros(rows: usize, cols: usize) -> Self {
+		Self { array: Array2::<f32>::zeros((rows, cols)) }
+	}
+
+	fn to_vec(&self) -> Vec<Vec<f32>> {
+		self.array
+			.rows()
+			.into_iter()
+			.map(|row| row.to_vec())
+			.collect()
+	}
+
+	fn mul(&self, other: &Matrix) -> Self {
+		Self { array: &self.array * &other.array }
 	}
 }
 
 // ============================================================================================== //
-// Propogation Trait
+// Propagation Trait
 
-trait Propogation {
-	// ================================================== //
-
-	fn forward(&mut self, input: Vec<f32>) {}
-
-	// ================================================== //
-
-	fn backward(&mut self, output_error: Vec<f32>, learning_rate: f32) {}
-
-	// ================================================== //
+trait Propagation {
+	fn forward(&mut self, input: Matrix) -> Matrix;
+	fn backward(&mut self, output_error: Matrix, learning_rate: f32) -> Matrix;
 }
 
 // ============================================================================================== //
-// Fully Connected Layer Struct
+// Fully Connected Layer
 
 struct FullyConnectedLayer {
-	input_size: usize,
-	output_size: usize,
-	inputs: Vec<f32>,
-	outputs: Vec<f32>,
-	weights: Vec<f32>, // One for every node in this layer * every node in the next layer
-	bias: Vec<f32>, // One for every node in the next layer
-	input_error: Vec<f32> // One for every node in this layer
+	input: Matrix,
+	output: Matrix,
+	weights: Matrix,
+	bias: Matrix,
 }
 
 impl FullyConnectedLayer {
-	// ================================================== //
-
 	fn new(input_size: usize, output_size: usize) -> Self {
 		Self {
-			input_size,
-			output_size,
-			inputs: Vec::with_capacity(input_size),
-			outputs: Vec::with_capacity(output_size),
-			weights: random_vector(input_size * output_size, -1.0, 1.0),
-			bias: random_vector(input_size * output_size, -1.0, 1.0),
-			input_error: Vec::with_capacity(input_size)
+			input: Matrix::zeros(1, input_size),
+			output: Matrix::zeros(1, output_size),
+			weights: Matrix::random(input_size, output_size, 0.0, 1.0),
+			bias: Matrix::random(1, output_size, -1.0, 1.0),
 		}
 	}
-
-	// ================================================== //
-
-	fn get_weight(&self, from_node: usize, to_node: usize) -> f32 {
-		// *from* is rows, *to* is cols
-		let index: usize = from_node * self.input_size + to_node;
-
-		self.weights[index]
-	}
-
-	// ================================================== //
-
-	fn get_bias(&self, from_node: usize) -> f32 {
-		// This vector is 1-dimensional
-		self.bias[from_node]
-	}
-
-	// ================================================== //
 }
 
-impl Propogation for FullyConnectedLayer {
-	// ================================================== //
-
-	fn forward(&mut self, input: Vec<f32>) {
-		assert_eq!(self.input_size, input.len(), "Wrong dimension for forward()!");
-		
-		for i in 0..self.input_size {
-			self.inputs[i] = input[i];
-		}
-
-		// for every node in the next layer,
-		for o in 0..self.output_size {
-			self.outputs[o] = 0.0; // (zero out the node)
-			// take each node in this layer
-			for i in 0..self.input_size {
-				// and add up this node's value times the corresponding weight
-				self.outputs[o] += self.inputs[i] * self.get_weight(i, o);
-				// plus the bias
-				self.outputs[o] += self.get_bias(i);
-			}
-		}
+impl Propagation for FullyConnectedLayer {
+	fn forward(&mut self, input_data: Matrix) -> Matrix {
+		self.input = input_data;
+		self.output = self.input.dot(&self.weights).add(&self.bias);
+		self.output.clone()
 	}
 
-	// ================================================== //
+	fn backward(&mut self, output_error: Matrix, learning_rate: f32) -> Matrix {
+		let input_error = output_error.dot(&self.weights.transpose());
+		let weights_error = self.input.transpose().dot(&output_error);
 
-	fn backward(&mut self, output_error: Vec<f32>, learning_rate: f32) {
-		// Output Error | this vector is length self.output_size
+		self.weights = self.weights.add(&weights_error.scale(-1.0 * learning_rate));
+		self.bias = self.bias.add(&output_error.scale(-1.0 * learning_rate));
 
-		// Inputs Error | this vector is length self.input_size
-		for i in 0..self.input_size {
-			self.input_error[i] = 0.0;
-			for o in 0..self.output_size {
-				self.input_error[i] += output_error[o] * self.get_weight(i, o);
-			}
-		}
-		
-		// Weights Error
-		let mut weights_error: f32 = 0.0;
-		for i in 0..self.input_size {
-			for o in 0..self.output_size {
-				weights_error += self.inputs[i] * output_error[o];
-			}
-		}
-
-		// Update parameters
-		for w in 0..self.weights.len() {
-			self.weights[w] -= learning_rate * weights_error;
-		}
-		for o in 0..self.output_size {
-			self.bias[o] -= learning_rate * output_error[o];
-		}
+		input_error
 	}
-
-	// ================================================== //
 }
 
 // ============================================================================================== //
-// Activation Layer Struct
+// Activation Layer
 
 struct ActivationLayer {
-	input_size: usize,
-	output_size: usize,
-	inputs: Vec<f32>,
-	outputs: Vec<f32>,
-	activation: fn(&Vec<f32>) -> Vec<f32>,
-	activation_prime: fn(&Vec<f32>) -> Vec<f32>,
-	input_error: Vec<f32>
+	input: Matrix,
+	output: Matrix,
+	activation: fn(&Matrix) -> Matrix,
+	activation_prime: fn(&Matrix) -> Matrix,
 }
 
 impl ActivationLayer {
-	// ================================================== //
-
-	fn new(input_size: usize, output_size: usize, activation: fn(&Vec<f32>) -> Vec<f32>,
-		activation_prime: fn(&Vec<f32>) -> Vec<f32>) -> Self {
-
+	fn new(input_size: usize, output_size: usize, activation: fn(&Matrix) -> Matrix,
+		activation_prime: fn(&Matrix) -> Matrix) -> Self {
+		
 		Self {
-			input_size,
-			output_size,
-			inputs: Vec::with_capacity(input_size),
-			outputs: Vec::with_capacity(output_size),
+			input: Matrix::zeros(1, input_size),
+			output: Matrix::zeros(1, output_size),
 			activation,
 			activation_prime,
-			input_error: Vec::with_capacity(input_size)
 		}
 	}
 }
 
-impl Propogation for ActivationLayer {
-	// ================================================== //
-
-	fn forward(&mut self, input: Vec<f32>) {
-		assert_eq!(self.input_size, input.len(), "Wrong dimension for forward()!");
-		let activated_inpts = (self.activation)(&self.inputs);
-		for i in 0..self.input_size {
-			self.inputs[i] = input[i];
-			self.outputs[i] = activated_inpts[i];
-		}
+impl Propagation for ActivationLayer {
+	fn forward(&mut self, input: Matrix) -> Matrix {
+		self.input = input;
+		self.output = (self.activation)(&self.input);
+		self.output.clone()
 	}
 
-	// ================================================== //
-
-	fn backward(&mut self, output_error: Vec<f32>, learning_rate: f32) {
-		let activated_prime_outputs = (self.activation_prime)(&self.outputs);
-		for i in 0..self.input_size {
-			self.input_error[i] = activated_prime_outputs[i] * output_error[i];
-		}
+	fn backward(&mut self, output_error: Matrix, _learning_rate: f32) -> Matrix {
+		let act_prime = (self.activation_prime)(&self.input);
+		act_prime.mul(&output_error) 
 	}
-
-	// ================================================== //
 }
 
 // ============================================================================================== //
 // Activation Functions
 
-fn vector_tanh(vector: &Vec<f32>) -> Vec<f32> {
-	(0..vector.len())
-		.map(|v| vector[v].tanh())
-		.collect()
+fn vector_tanh(matrix: &Matrix) -> Matrix {
+	Matrix { array: matrix.array.mapv(|x| x.tanh()) }
 }
 
-fn vector_tanh_prime(vector: &Vec<f32>) -> Vec<f32> {
-	(0..vector.len())
-		.map(|v| 1.0 - vector[v].tanh().powf(2.0))
-		.collect()
+fn vector_tanh_prime(matrix: &Matrix) -> Matrix {
+	Matrix { array: matrix.array.mapv(|x| 1.0 - x.tanh().powi(2)) }
+}
+
+// ============================================================================================== //
+// Loss Functions
+
+fn mse(y_true: &Matrix, y_pred: &Matrix) -> f32 {
+	(&y_true.array - &y_pred.array)
+		.mapv(|x| x.powi(2))
+		.mean()
+		.unwrap_or(0.0)
+}
+
+fn mse_prime(y_true: &Matrix, y_pred: &Matrix) -> Matrix {
+	let n = y_true.array.len() as f32;
+	let array = (&y_pred.array - &y_true.array).mapv(|x| 2.0 * x / n);
+
+	Matrix { array }
 }
 
 // ============================================================================================== //
@@ -273,41 +192,148 @@ fn vector_tanh_prime(vector: &Vec<f32>) -> Vec<f32> {
 
 enum Layer {
 	FullyConnectedLayer(FullyConnectedLayer),
-	ActivationLayer(ActivationLayer)
+	ActivationLayer(ActivationLayer),
 }
 
-// ============================================================================================== //
-// Network Struct
-
-struct Network {
-	structure: Vec<usize>,
-	layers: Vec<Layer>
-}
-
-impl Network {
-	// ================================================== //
-
-	fn new(structure: Vec<usize>) -> Self {
-		let mut layers: Vec<Layer> = Vec::new();
-		for l in 0..(structure.len() - 1) {
-			layers.push(Layer::FullyConnectedLayer(FullyConnectedLayer::new(structure[l], structure[l + 1])));
-			layers.push(
-				Layer::ActivationLayer(ActivationLayer::new(
-					structure[l + 1],
-					structure[l + 1],
-					vector_tanh,
-					vector_tanh_prime
-				))
-			);
-		}
-
-		Self {
-			structure,
-			layers
+impl Propagation for Layer {
+	fn forward(&mut self, input: Matrix) -> Matrix {
+		match self {
+			Layer::FullyConnectedLayer(l) => l.forward(input),
+			Layer::ActivationLayer(l) => l.forward(input),
 		}
 	}
 
-	// ================================================== //
+	fn backward(&mut self, output_error: Matrix, learning_rate: f32) -> Matrix {
+		match self {
+			Layer::FullyConnectedLayer(l) => l.backward(output_error, learning_rate),
+			Layer::ActivationLayer(l) => l.backward(output_error, learning_rate),
+		}
+	}
 }
 
 // ============================================================================================== //
+// Network Struct (Python Bound)
+
+#[pyclass] // 2. Mark struct for PyO3
+struct Network {
+	structure: Vec<usize>,
+	layers: Vec<Layer>,
+}
+
+#[pymethods] // 3. Expose methods to Python
+impl Network {
+	#[new] // Maps to Network(structure) in Python
+	fn new(structure: Vec<usize>) -> Self {
+		let mut layers: Vec<Layer> = Vec::new();
+		for l in 0..(structure.len() - 1) {
+			layers.push(Layer::FullyConnectedLayer(FullyConnectedLayer::new(
+				structure[l],
+				structure[l + 1],
+			)));
+			layers.push(Layer::ActivationLayer(ActivationLayer::new(
+				structure[l + 1],
+				structure[l + 1],
+				vector_tanh,
+				vector_tanh_prime,
+			)));
+		}
+
+		Self { structure, layers }
+	}
+
+	// Pass nested list from Python: net.predict([[0.5, 0.2]]) -> [[0.81]]
+	fn predict(&mut self, input_data: Vec<Vec<f32>>) -> Vec<Vec<f32>> {
+		let mut current = Matrix::from_data(input_data);
+		for layer in &mut self.layers {
+			current = layer.forward(current);
+		}
+		current.to_vec()
+	}
+
+	#[pyo3(signature = (input_data, target, epochs, learning_rate, update_frequency = 1000))]
+	fn train(
+		&mut self,
+		input_data: Vec<Vec<f32>>,
+		target: Vec<Vec<f32>>,
+		epochs: u32,
+		learning_rate: f32,
+		update_frequency: usize,
+	) -> f32 {
+		let inputs = Matrix::from_data(input_data);
+		let outputs = Matrix::from_data(target);
+
+		let mut err = 0.0;
+		for e in 1..=epochs {
+			// Forward pass
+			let predictions = self.predict_from_matrix(&inputs);
+			err = mse(&outputs, &predictions);
+
+			// Compute initial error gradient dE/dY
+			let mut error = mse_prime(&outputs, &predictions);
+
+			// Backpropagate backwards through layers
+			for layer in self.layers.iter_mut().rev() {
+				error = layer.backward(error, learning_rate);
+			}
+
+			if (e as usize) % update_frequency == 0 || e == epochs {
+				println!("Epoch {}: error {}", e, err);
+			}
+		}
+
+		err
+	}
+
+	#[pyo3(signature = (input_data, target, loss_threshold, max_epochs, learning_rate,
+		update_frequency = 1000))]
+	fn train_until(
+		&mut self,
+		input_data: Vec<Vec<f32>>,
+		target: Vec<Vec<f32>>,
+		loss_threshold: f32,
+		max_epochs: usize,
+		learning_rate: f32,
+		update_frequency: usize,
+	) -> usize {
+		let inputs = Matrix::from_data(input_data);
+		let outputs = Matrix::from_data(target);
+
+		let mut epoch = 1;
+		let mut current_loss = f32::MAX;
+
+		while (current_loss > loss_threshold) & (epoch <= max_epochs) {
+			// Forward pass
+			let predictions = self.predict_from_matrix(&inputs);
+			current_loss = mse(&outputs, &predictions);
+
+			// Compute initial error gradient dE/dY (Renamed to `gradient`)
+			let mut gradient = mse_prime(&outputs, &predictions);
+
+			// Backpropagate backwards through layers
+			for layer in self.layers.iter_mut().rev() {
+				gradient = layer.backward(gradient, learning_rate);
+			}
+
+			if epoch % update_frequency == 0 {
+				println!("Epoch {}: MSE Loss {}", epoch, current_loss);
+			}
+
+			epoch += 1;
+		}
+
+		println!("Target reached at Epoch {}: MSE Loss {}", epoch, current_loss);
+
+		epoch
+	}
+}
+
+impl Network {
+	fn predict_from_matrix(&mut self, inputs: &Matrix) -> Matrix {
+		let mut current = inputs.clone();
+		for layer in &mut self.layers {
+			current = layer.forward(current);
+		}
+
+		current
+	}
+}
