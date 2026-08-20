@@ -3,30 +3,13 @@
 # ================================================================================================ #
 # Imports
 
-from math import log10
+from math import log10, sin, cos, tan, pi
 from random import randint
 from time import time
 
 from rust import Network
 
 # ================================================================================================ #
-
-structure = [2, 4, 8, 4, 2, 1]
-network = Network(structure)
-
-inputs = [
-	[0.0, 0.0],
-	[0.0, 1.0],
-	[1.0, 0.0],
-	[1.0, 1.0]
-]
-
-outputs = [
-	[0.0],
-	[1.0],
-	[1.0],
-	[0.0]
-]
 
 def format_predictions(predictions: list[list[float]]) -> list[list[float]]:
 	for s, sample in enumerate(predictions):
@@ -78,4 +61,12 @@ def create_optimum_network(inputs: list[list[float]], outputs: list[list[float]]
 	results.sort(key = lambda structure: structure[1])
 	print(results[0])
 
-create_optimum_network(inputs, outputs)
+# ================================================================================================ #
+
+inputs = [
+	[cos(x * pi), sin(x * pi)] for x in [0.0, 0.5, 1.0, 1.5]
+]
+
+outputs = [
+	(x + y) for (x, y) in inputs
+]
