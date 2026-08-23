@@ -217,6 +217,7 @@ impl Propagation for Layer {
 
 #[pyclass]
 struct Network {
+	#[allow(dead_code)]
 	structure: Vec<usize>,
 	layers: Vec<Layer>,
 }

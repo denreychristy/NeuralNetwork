@@ -182,7 +182,6 @@ class NeuralNetApp(tk.Tk):
 
 			# Ensure input is a 2D array of floats
 			pred_data = [[float(val) for val in row] for row in raw_data]
-			print(pred_data)
 
 			# Call Rust network
 			results = self.net.predict(pred_data)
