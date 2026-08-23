@@ -1,11 +1,6 @@
-// Rust Module
-
-// ============================================================================================== //
-// Imports
-
-use rand::RngExt;
 use ndarray::Array2;
 use pyo3::prelude::*;
+use rand::RngExt;
 
 // ============================================================================================== //
 // PyModule Function
@@ -33,30 +28,33 @@ impl Matrix {
 		Self { array: self.array.dot(&other.array) }
 	}
 
-	fn from_data(data: Vec<Vec<f32>>) -> Self {
-		let rows = data.len();
-		let cols = data[0].len();
-		let flat_data: Vec<f32> = data.into_iter().flatten().collect();
-		let array = Array2::from_shape_vec(
-			(rows, cols),
-			flat_data
-		)
-			.expect("Dimension mismatch!");
+	fn mul(&self, other: &Matrix) -> Self {
+		Self { array: &self.array * &other.array }
+	}
 
-		Self { array }
+	fn scale(&self, factor: f32) -> Self {
+		Self { array: &self.array * factor }
 	}
 
 	fn transpose(&self) -> Self {
 		Self { array: self.array.t().to_owned() }
 	}
 
-	fn random(rows: usize, cols: usize, lb: f32, ub: f32) -> Self {
-		let mut rng = rand::rng();
-		Self { array: Array2::from_shape_fn((rows, cols), |_| rng.random_range(lb..=ub)) }
+	fn from_data(data: Vec<Vec<f32>>) -> Self {
+		let rows = data.len();
+		let cols = if rows > 0 { data[0].len() } else { 0 };
+		let flat_data: Vec<f32> = data.into_iter().flatten().collect();
+		let array = Array2::from_shape_vec((rows, cols), flat_data)
+			.expect("Dimension mismatch in Matrix::from_data");
+
+		Self { array }
 	}
 
-	fn scale(&self, factor: f32) -> Self {
-		Self { array: &self.array * factor }
+	fn random(rows: usize, cols: usize, lb: f32, ub: f32) -> Self {
+		let mut rng = rand::rng();
+		Self {
+			array: Array2::from_shape_fn((rows, cols), |_| rng.random_range(lb..=ub)),
+		}
 	}
 
 	fn zeros(rows: usize, cols: usize) -> Self {
@@ -64,15 +62,9 @@ impl Matrix {
 	}
 
 	fn to_vec(&self) -> Vec<Vec<f32>> {
-		self.array
-			.rows()
-			.into_iter()
-			.map(|row| row.to_vec())
+		(0..self.array.nrows())
+			.map(|r| (0..self.array.ncols()).map(|c| self.array[[r, c]]).collect())
 			.collect()
-	}
-
-	fn mul(&self, other: &Matrix) -> Self {
-		Self { array: &self.array * &other.array }
 	}
 }
 
@@ -89,7 +81,6 @@ trait Propagation {
 
 struct FullyConnectedLayer {
 	input: Matrix,
-	output: Matrix,
 	weights: Matrix,
 	bias: Matrix,
 }
@@ -98,8 +89,7 @@ impl FullyConnectedLayer {
 	fn new(input_size: usize, output_size: usize) -> Self {
 		Self {
 			input: Matrix::zeros(1, input_size),
-			output: Matrix::zeros(1, output_size),
-			weights: Matrix::random(input_size, output_size, 0.0, 1.0),
+			weights: Matrix::random(input_size, output_size, -1.0, 1.0),
 			bias: Matrix::random(1, output_size, -1.0, 1.0),
 		}
 	}
@@ -108,16 +98,30 @@ impl FullyConnectedLayer {
 impl Propagation for FullyConnectedLayer {
 	fn forward(&mut self, input_data: Matrix) -> Matrix {
 		self.input = input_data;
-		self.output = self.input.dot(&self.weights).add(&self.bias);
-		self.output.clone()
+		let mut out = self.input.dot(&self.weights);
+		
+		// Broadcast 1xN bias across B rows of the output
+		for r in 0..out.array.nrows() {
+			for c in 0..out.array.ncols() {
+				out.array[[r, c]] += self.bias.array[[0, c]];
+			}
+		}
+		out
 	}
 
 	fn backward(&mut self, output_error: Matrix, learning_rate: f32) -> Matrix {
 		let input_error = output_error.dot(&self.weights.transpose());
 		let weights_error = self.input.transpose().dot(&output_error);
 
-		self.weights = self.weights.add(&weights_error.scale(-1.0 * learning_rate));
-		self.bias = self.bias.add(&output_error.scale(-1.0 * learning_rate));
+		// Sum gradients along columns for batch bias updates
+		let mut bias_error = Matrix::zeros(1, self.bias.array.ncols());
+		for c in 0..output_error.array.ncols() {
+			let sum: f32 = output_error.array.column(c).sum();
+			bias_error.array[[0, c]] = sum;
+		}
+
+		self.weights = self.weights.add(&weights_error.scale(-learning_rate));
+		self.bias = self.bias.add(&bias_error.scale(-learning_rate));
 
 		input_error
 	}
@@ -128,18 +132,17 @@ impl Propagation for FullyConnectedLayer {
 
 struct ActivationLayer {
 	input: Matrix,
-	output: Matrix,
 	activation: fn(&Matrix) -> Matrix,
 	activation_prime: fn(&Matrix) -> Matrix,
 }
 
 impl ActivationLayer {
-	fn new(input_size: usize, output_size: usize, activation: fn(&Matrix) -> Matrix,
-		activation_prime: fn(&Matrix) -> Matrix) -> Self {
-		
+	fn new(
+		activation: fn(&Matrix) -> Matrix,
+		activation_prime: fn(&Matrix) -> Matrix,
+	) -> Self {
 		Self {
-			input: Matrix::zeros(1, input_size),
-			output: Matrix::zeros(1, output_size),
+			input: Matrix::zeros(1, 1),
 			activation,
 			activation_prime,
 		}
@@ -149,13 +152,12 @@ impl ActivationLayer {
 impl Propagation for ActivationLayer {
 	fn forward(&mut self, input: Matrix) -> Matrix {
 		self.input = input;
-		self.output = (self.activation)(&self.input);
-		self.output.clone()
+		(self.activation)(&self.input)
 	}
 
 	fn backward(&mut self, output_error: Matrix, _learning_rate: f32) -> Matrix {
 		let act_prime = (self.activation_prime)(&self.input);
-		act_prime.mul(&output_error) 
+		act_prime.mul(&output_error) // Hadamard product for element-wise activation
 	}
 }
 
@@ -183,7 +185,6 @@ fn mse(y_true: &Matrix, y_pred: &Matrix) -> f32 {
 fn mse_prime(y_true: &Matrix, y_pred: &Matrix) -> Matrix {
 	let n = y_true.array.len() as f32;
 	let array = (&y_pred.array - &y_true.array).mapv(|x| 2.0 * x / n);
-
 	Matrix { array }
 }
 
@@ -214,15 +215,15 @@ impl Propagation for Layer {
 // ============================================================================================== //
 // Network Struct (Python Bound)
 
-#[pyclass] // 2. Mark struct for PyO3
+#[pyclass]
 struct Network {
 	structure: Vec<usize>,
 	layers: Vec<Layer>,
 }
 
-#[pymethods] // 3. Expose methods to Python
+#[pymethods]
 impl Network {
-	#[new] // Maps to Network(structure) in Python
+	#[new]
 	fn new(structure: Vec<usize>) -> Self {
 		let mut layers: Vec<Layer> = Vec::new();
 		for l in 0..(structure.len() - 1) {
@@ -231,8 +232,6 @@ impl Network {
 				structure[l + 1],
 			)));
 			layers.push(Layer::ActivationLayer(ActivationLayer::new(
-				structure[l + 1],
-				structure[l + 1],
 				vector_tanh,
 				vector_tanh_prime,
 			)));
@@ -241,13 +240,10 @@ impl Network {
 		Self { structure, layers }
 	}
 
-	// Pass nested list from Python: net.predict([[0.5, 0.2]]) -> [[0.81]]
 	fn predict(&mut self, input_data: Vec<Vec<f32>>) -> Vec<Vec<f32>> {
-		let mut current = Matrix::from_data(input_data);
-		for layer in &mut self.layers {
-			current = layer.forward(current);
-		}
-		current.to_vec()
+		let input_matrix = Matrix::from_data(input_data);
+		let result_matrix = self.forward_internal(&input_matrix);
+		result_matrix.to_vec()
 	}
 
 	#[pyo3(signature = (input_data, target, epochs, learning_rate, update_frequency = 1000))]
@@ -264,76 +260,30 @@ impl Network {
 
 		let mut err = 0.0;
 		for e in 1..=epochs {
-			// Forward pass
-			let predictions = self.predict_from_matrix(&inputs);
+			let predictions = self.forward_internal(&inputs);
 			err = mse(&outputs, &predictions);
 
-			// Compute initial error gradient dE/dY
 			let mut error = mse_prime(&outputs, &predictions);
 
-			// Backpropagate backwards through layers
 			for layer in self.layers.iter_mut().rev() {
 				error = layer.backward(error, learning_rate);
 			}
 
 			if (e as usize) % update_frequency == 0 || e == epochs {
-				println!("Epoch {}: error {}", e, err);
+				println!("Epoch {}: MSE Loss {}", e, err);
 			}
 		}
 
 		err
 	}
-
-	#[pyo3(signature = (input_data, target, loss_threshold, max_epochs, learning_rate,
-		update_frequency = 1000))]
-	fn train_until(
-		&mut self,
-		input_data: Vec<Vec<f32>>,
-		target: Vec<Vec<f32>>,
-		loss_threshold: f32,
-		max_epochs: usize,
-		learning_rate: f32,
-		update_frequency: usize,
-	) -> usize {
-		let inputs = Matrix::from_data(input_data);
-		let outputs = Matrix::from_data(target);
-
-		let mut epoch = 1;
-		let mut current_loss = f32::MAX;
-
-		while (current_loss > loss_threshold) & (epoch <= max_epochs) {
-			// Forward pass
-			let predictions = self.predict_from_matrix(&inputs);
-			current_loss = mse(&outputs, &predictions);
-
-			// Compute initial error gradient dE/dY (Renamed to `gradient`)
-			let mut gradient = mse_prime(&outputs, &predictions);
-
-			// Backpropagate backwards through layers
-			for layer in self.layers.iter_mut().rev() {
-				gradient = layer.backward(gradient, learning_rate);
-			}
-
-			if epoch % update_frequency == 0 {
-				println!("Epoch {}: MSE Loss {}", epoch, current_loss);
-			}
-
-			epoch += 1;
-		}
-
-		println!("Target reached at Epoch {}: MSE Loss {}", epoch, current_loss);
-
-		epoch
-	}
 }
 
 impl Network {
-	fn predict_from_matrix(&mut self, inputs: &Matrix) -> Matrix {
+	fn forward_internal(&mut self, inputs: &Matrix) -> Matrix {
 		let mut current = inputs.clone();
 		for layer in &mut self.layers {
 			current = layer.forward(current);
 		}
-
 		current
 	}
 }
